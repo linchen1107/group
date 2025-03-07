@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>分組意願調查 - 登入</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: linear-gradient(135deg, #74ABE2, #5563DE);
+      padding: 20px;
+      font-family: 'Montserrat', sans-serif;
+      color: #333;
+      position: relative;
+    }
+    #reloginButton {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      padding: 8px 16px;
+      font-size: 1em;
+      border: none;
+      background: rgba(231, 91, 91, 0.86);
+      color: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+      display: none;
+      z-index: 1000;
+    }
+    .header { text-align: center; padding: 20px; color: #fff; }
+    .header h1 { font-size: 2.5em; margin-bottom: 10px; text-shadow: 2px 2px 5px rgba(0,0,0,0.3); }
+    .container {
+      background: #fff;
+      max-width: 1000px;
+      margin: 20px auto;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    }
+    #loginSection { text-align: center; margin-bottom: 20px; }
+    #loginSection input { padding: 8px; margin: 5px; font-size: 1.1em; }
+    #loginSection button {
+      padding: 10px 24px;
+      font-size: 1.5em;
+      margin-top: 10px;
+      cursor: pointer;
+      border: none;
+      background: #5563DE;
+      color: #fff;
+      border-radius: 8px;
+      transition: background 0.3s, transform 0.2s;
+    }
+    #loginSection button:hover { background: #3c47a1; transform: translateY(-3px); }
+    #loginError { color: red; margin-top: 10px; }
+    #evaluationSection { display: none; }
+    #closedMessage { text-align: center; padding: 20px; }
+    .buttons { text-align: center; margin-top: 20px; }
+    .buttons button {
+      background: #5563DE;
+      color: #fff;
+      border: none;
+      padding: 12px 25px;
+      font-size: 1.1em;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.3s, transform 0.2s;
+      margin: 10px;
+    }
+    .buttons button:hover { background: #3c47a1; transform: translateY(-3px); }
+    #searchInput {
+      width: 100%;
+      padding: 10px;
+      margin: 20px auto;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 1em;
+      display: block;
+      max-width: 400px;
+    }
+    .student-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .student-card {
+      border: 2px solid #5563DE;
+      border-radius: 12px;
+      padding: 15px;
+      background: #f7f7f7;
+      transition: transform 0.3s, box-shadow 0.3s;
+    }
+    .student-card:hover { transform: translateY(-5px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+    .student-card h3 { margin-bottom: 5px; font-size: 1.2em; color: #5563DE; }
+    .student-card p { font-size: 0.9em; color: #555; margin-bottom: 5px; }
+    .toggle { display: flex; align-items: center; margin: 10px 0; }
+    .toggle input { transform: scale(1.3); margin-right: 8px; }
+    #adminLink { text-align: center; margin-top: 20px; }
+    #adminLink a { color: #5563DE; text-decoration: none; font-weight: bold; }
+    /* 主畫面說明 */
+    #mainExplanation { text-align: center; margin-bottom: 20px; font-size: 1.1em; color: #333; }
+  </style>
+</head>
+<body>
+  <button id="reloginButton" onclick="relogin()">重新登入</button>
+  <div class="header">
+    <h1>分組意願調查</h1>
+  </div>
+  
+  <!-- 主畫面說明 -->
+  <div id="mainExplanation" class="container">
+    <p>請對其他同學評分 (1-5 分)，依照「互相給分高的同學優先分為一組」的邏輯將同學分組</p>
+  </div>
+  
+  <!-- 當表單已關閉時顯示 -->
+  <div id="closedMessage" style="display:none;"></div>
+  
+  <!-- 登入區 -->
+  <div class="container" id="loginSection">
+    <h2>請先登入</h2>
+    <br>
+    <input type="text" id="inputName" placeholder="請輸入姓名">
+    <input type="text" id="inputId" placeholder="請輸入學號">
+    <br><br>
+    <button onclick="loginUser()">登入</button>
+    <div id="loginError"></div>
+  </div>
+  
+  <!-- 評分區 -->
+  <div class="container" id="evaluationSection">
+    <input type="text" id="searchInput" placeholder="搜尋學生姓名或學號...">
+    <div class="student-cards" id="studentCardsContainer"></div>
+    <div class="buttons">
+      <button onclick="confirmEvaluation()">確認評分</button>
+    </div>
+    <div id="summary"></div>
+  </div>
+  
+  <!-- 底部新增管理員連結 -->
+  <div id="adminLink">
+    <a href="/admin_login">管理員登入</a>
+  </div>
+  
+  <script>
+    let allStudents = JSON.parse('{{ students|safe }}');
+    let currentUser = null;
+    let currentUserDefaultRating = 3;
+    
+    window.addEventListener("DOMContentLoaded", function(){
+      checkFormStatus();
+      const storedUser = localStorage.getItem("currentUser");
+      if (storedUser) {
+        currentUser = JSON.parse(storedUser);
+        allStudents = allStudents.filter(s => s.id !== currentUser.id);
+        document.getElementById("loginSection").style.display = "none";
+        document.getElementById("evaluationSection").style.display = "block";
+        document.getElementById("reloginButton").style.display = "block";
+        generateStudentCards(allStudents);
+      }
+    });
+    
+    function checkFormStatus() {
+      fetch('/api_form_status')
+        .then(res => res.json())
+        .then(data => {
+          if (!data.isOpen) {
+            document.getElementById("evaluationSection").style.display = "none";
+            document.getElementById("loginSection").style.display = "none";
+            let closedDiv = document.getElementById("closedMessage");
+            closedDiv.style.display = "block";
+            closedDiv.innerHTML = "<h2>表單已關閉</h2><p>所有評分已結束，請點選下方按鈕查看分組結果。</p>";
+            let viewGroupBtn = document.createElement("button");
+            viewGroupBtn.innerText = "查看分組結果";
+            viewGroupBtn.onclick = function() { window.location.href = "/grouping_result"; };
+            closedDiv.appendChild(viewGroupBtn);
+          }
+        })
+        .catch(err => console.error(err));
+    }
+    
+    function loginUser() {
+      let inputName = document.getElementById("inputName").value.trim();
+      let inputId = document.getElementById("inputId").value.trim();
+      let loginError = document.getElementById("loginError");
+      loginError.textContent = "";
+      let matchedStudent = allStudents.find(s => s.name === inputName && s.id === inputId);
+      if (matchedStudent) {
+        currentUser = matchedStudent;
+        localStorage.setItem("currentUser", JSON.stringify(currentUser));
+        allStudents = allStudents.filter(s => s.id !== currentUser.id);
+        document.getElementById("loginSection").style.display = "none";
+        document.getElementById("evaluationSection").style.display = "block";
+        document.getElementById("reloginButton").style.display = "block";
+        generateStudentCards(allStudents);
+      } else {
+        let nameExists = allStudents.some(s => s.name === inputName);
+        let idExists = allStudents.some(s => s.id === inputId);
+        if (nameExists && !idExists) {
+          loginError.textContent = "學號有誤";
+        } else if (idExists && !nameExists) {
+          loginError.textContent = "姓名有誤";
+        } else {
+          loginError.textContent = "輸入錯誤，請重新輸入";
+        }
+      }
+    }
+    
+    function relogin() {
+      localStorage.removeItem("currentUser");
+      location.reload();
+    }
+    
+    document.getElementById("searchInput").addEventListener("input", function(){
+      const query = this.value.trim().toLowerCase();
+      const cards = document.querySelectorAll(".student-card");
+      cards.forEach(card => {
+        const studentName = card.querySelector("h3").textContent.toLowerCase();
+        const studentId = card.getAttribute("data-id").toLowerCase();
+        if (studentName.includes(query) || studentId.includes(query)) {
+          card.style.display = "";
+        } else {
+          card.style.display = "none";
+        }
+      });
+    });
+    
+    function generateStudentCards(students) {
+      const container = document.getElementById("studentCardsContainer");
+      container.innerHTML = "";
+      students.forEach(student => {
+        const card = document.createElement("div");
+        card.className = "student-card";
+        card.setAttribute("data-id", student.id);
+        card.innerHTML = `
+          <h3>${student.name}</h3>
+          <p>學號：${student.id}</p>
+          <div class="toggle">
+            <input type="checkbox" id="chk_${student.id}" onclick="toggleRating('${student.id}')">
+            <span>啟用評分</span>
+          </div>
+          <select id="rating_${student.id}" disabled>
+            <option value="5">最想一組 (5分)</option>
+            <option value="4">非常想一組 (4分)</option>
+            <option value="3">尚可一組 (3分)</option>
+            <option value="2">不太想一組 (2分)</option>
+            <option value="1">最不想一組 (1分)</option>
+          </select>
+        `;
+        container.appendChild(card);
+      });
+    }
+    
+    function toggleRating(id) {
+      document.getElementById("rating_" + id).disabled = !document.getElementById("chk_" + id).checked;
+    }
+    
+    function confirmEvaluation() {
+      const summary = document.getElementById("summary");
+      summary.innerHTML = "";
+      let evaluations = [];
+      document.querySelectorAll(".student-card").forEach(card => {
+        const studentId = card.getAttribute("data-id");
+        const name = card.querySelector("h3").textContent;
+        const checkbox = card.querySelector("input[type='checkbox']");
+        const ratingSelect = card.querySelector("select");
+        let rating = checkbox.checked ? ratingSelect.value : "3";
+        evaluations.push({ id: studentId, name: name, rating: rating });
+      });
+      if (currentUser) {
+        evaluations.push({ id: currentUser.id, name: currentUser.name, rating: currentUserDefaultRating });
+      }
+      let postData = {
+        evaluator: { id: currentUser.id, name: currentUser.name },
+        evaluations: evaluations
+      };
+      let summaryHtml = "<h3>確認評分：</h3><ul>";
+      evaluations.forEach(e => {
+        summaryHtml += `<li>${e.name}：評分 ${e.rating} 分</li>`;
+      });
+      summaryHtml += "</ul>";
+      summary.innerHTML = summaryHtml;
+      fetch('http://localhost:5000/submit_evaluation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(postData)
+      })
+      .then(response => response.json())
+      .then(result => {
+        console.log("後端回應：", result);
+      })
+      .catch(error => {
+        console.error("錯誤：", error);
+      });
+    }
+    
+    function exportMatrixExcel() {
+      window.open('/export_relationship_matrix', '_blank');
+    }
+  </script>
+</body>
+</html>
