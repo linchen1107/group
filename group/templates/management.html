@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>管理員後台 - 拖曳上傳</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    /* 導覽列 */
+    .nav {
+      background: #5563DE;
+      padding: 10px;
+      color: #fff;
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .nav a {
+      color: #fff;
+      text-decoration: none;
+      font-size: 1.2em;
+    }
+    body { 
+      font-family: 'Montserrat', sans-serif; 
+      background: #f0f0f0; 
+      padding: 20px; 
+      margin: 0;
+    }
+    .container {
+      background: #fff;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    h2 { text-align: center; }
+    form { margin-top: 20px; }
+    label { display: block; margin-bottom: 8px; }
+    input[type="text"],
+    input[type="password"] {
+      width: 90%;
+      padding: 8px;
+      margin-bottom: 10px;
+    }
+    button {
+      padding: 10px 20px;
+      margin-top: 15px;
+      cursor: pointer;
+    }
+    .hidden { display: none; }
+
+    /* 拖曳區樣式 */
+    .drop-zone {
+      border: 3px dashed #ccc;
+      border-radius: 8px;
+      padding: 30px;
+      text-align: center;
+      color: #999;
+      cursor: pointer;
+      transition: border-color 0.3s;
+      margin-bottom: 10px;
+    }
+    .drop-zone.dragover {
+      border-color: #5563DE;
+      color: #5563DE;
+    }
+    .drop-zone p {
+      margin: 0;
+      font-size: 1em;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <!-- 導覽列，左側連回學生登入首頁，右側為目前頁面 -->
+  <div class="nav">
+    <a href="/">學生登入</a>
+    <span>管理員登入</span>
+  </div>
+
+  <!-- 管理員登入區 -->
+  <div class="container" id="loginSection">
+    <h2>管理員登入</h2>
+    <form id="adminLoginForm">
+      <label>帳號:</label>
+      <input type="text" name="username" id="adminUsername" required>
+      <label>密碼:</label>
+      <input type="password" name="password" id="adminPassword" required>
+      <button type="submit">登入</button>
+    </form>
+    <div id="loginError" style="color:red;"></div>
+  </div>
+
+  <!-- 管理後台區，登入成功後顯示 -->
+  <div class="container hidden" id="adminDashboard">
+    <h2>管理員後台</h2>
+
+    <!-- 上傳 Excel 檔 (拖曳區) -->
+    <div>
+      <h3>上傳班級名單 (Excel格式)</h3>
+      <div id="dropZoneExcel" class="drop-zone">
+        <p>將 Excel 檔案拖曳到此處，或點擊選取檔案</p>
+      </div>
+      <!-- 隱藏的 <input type="file"> 讓使用者也能點擊選取 -->
+      <input type="file" id="excelFileInput" name="file" accept=".xlsx, .xls" hidden>
+      <button id="uploadExcelBtn">上傳 Excel</button>
+      <div id="uploadStatus" style="margin-top:10px; color:blue;"></div>
+    </div>
+
+    <hr style="margin: 20px 0;">
+
+    <!-- 上傳 XML 檔 (拖曳區) -->
+    <div>
+      <h3>上傳班級名單 (XML格式)</h3>
+      <div id="dropZoneXML" class="drop-zone">
+        <p>將 XML 檔案拖曳到此處，或點擊選取檔案</p>
+      </div>
+      <!-- 隱藏的 <input type="file"> 讓使用者也能點擊選取 -->
+      <input type="file" id="xmlFileInput" name="file" accept=".xml" hidden>
+      <button id="uploadXMLBtn">上傳 XML</button>
+      <div id="uploadStatusXML" style="margin-top:10px; color:blue;"></div>
+    </div>
+
+    <hr style="margin: 20px 0;">
+
+    <!-- 匯出分組結果 Excel -->
+    <div>
+      <h3>匯出分組結果 Excel</h3>
+      <button onclick="window.location.href='/admin/export_grouping'">匯出 Excel</button>
+    </div>
+
+    <hr style="margin: 20px 0;">
+
+    <!-- 登出 -->
+    <div>
+      <h3>登出</h3>
+      <button onclick="window.location.href='/logout_admin'">登出</button>
+    </div>
+  </div>
+
+  <script>
+    // ----------------------
+    // 管理員登入邏輯
+    // ----------------------
+    const loginSection = document.getElementById("loginSection");
+    const adminDashboard = document.getElementById("adminDashboard");
+    const loginError = document.getElementById("loginError");
+    document.getElementById("adminLoginForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const username = document.getElementById("adminUsername").value;
+      const password = document.getElementById("adminPassword").value;
+      loginError.textContent = "";
+      
+      fetch('/admin_login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
+      })
+      .then(response => {
+        // 如果後端以 redirect 方式返回，表示登入成功
+        if (response.redirected) {
+          // 顯示管理員後台區
+          loginSection.classList.add("hidden");
+          adminDashboard.classList.remove("hidden");
+        } else {
+          // 否則讀取錯誤訊息
+          return response.text().then(text => { throw new Error(text); });
+        }
+      })
+      .catch(err => {
+        loginError.textContent = "帳號或密碼錯誤";
+      });
+    });
+
+    // ----------------------
+    // 拖曳上傳 - Excel
+    // ----------------------
+    const dropZoneExcel = document.getElementById('dropZoneExcel');
+    const excelFileInput = document.getElementById('excelFileInput');
+    const uploadExcelBtn = document.getElementById('uploadExcelBtn');
+    const uploadStatus = document.getElementById('uploadStatus');
+
+    // 防止瀏覽器預設行為 (開啟檔案) 
+    dropZoneExcel.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropZoneExcel.classList.add('dragover');
+    });
+    dropZoneExcel.addEventListener('dragleave', e => {
+      e.preventDefault();
+      dropZoneExcel.classList.remove('dragover');
+    });
+    dropZoneExcel.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZoneExcel.classList.remove('dragover');
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        excelFileInput.files = e.dataTransfer.files;  // 將拖曳的檔案放入 input
+        dropZoneExcel.querySelector('p').textContent = e.dataTransfer.files[0].name;
+      }
+    });
+
+    // 允許點擊 drag zone 以開啟檔案選擇器
+    dropZoneExcel.addEventListener('click', () => {
+      excelFileInput.click();
+    });
+    // 若使用者用點擊方式選擇檔案，顯示檔名
+    excelFileInput.addEventListener('change', () => {
+      if (excelFileInput.files.length > 0) {
+        dropZoneExcel.querySelector('p').textContent = excelFileInput.files[0].name;
+      }
+    });
+
+    // 按下上傳 Excel
+    uploadExcelBtn.addEventListener('click', e => {
+      e.preventDefault();
+      if (!excelFileInput.files.length) {
+        uploadStatus.style.color = "red";
+        uploadStatus.textContent = "請先拖曳或選擇一個 Excel 檔案";
+        return;
+      }
+      uploadStatus.style.color = "blue";
+      uploadStatus.textContent = "上傳中...";
+      const formData = new FormData();
+      formData.append("file", excelFileInput.files[0]);
+
+      fetch('/admin/upload_classlist', {
+        method: 'POST',
+        body: formData
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.error) {
+          uploadStatus.style.color = "red";
+          uploadStatus.textContent = data.error;
+        } else {
+          uploadStatus.style.color = "green";
+          uploadStatus.textContent = data.message || "上傳成功";
+        }
+      })
+      .catch(err => {
+        uploadStatus.style.color = "red";
+        uploadStatus.textContent = "上傳失敗: " + err;
+      });
+    });
+
+    // ----------------------
+    // 拖曳上傳 - XML
+    // ----------------------
+    const dropZoneXML = document.getElementById('dropZoneXML');
+    const xmlFileInput = document.getElementById('xmlFileInput');
+    const uploadXMLBtn = document.getElementById('uploadXMLBtn');
+    const uploadStatusXML = document.getElementById('uploadStatusXML');
+
+    dropZoneXML.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropZoneXML.classList.add('dragover');
+    });
+    dropZoneXML.addEventListener('dragleave', e => {
+      e.preventDefault();
+      dropZoneXML.classList.remove('dragover');
+    });
+    dropZoneXML.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZoneXML.classList.remove('dragover');
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        xmlFileInput.files = e.dataTransfer.files; 
+        dropZoneXML.querySelector('p').textContent = e.dataTransfer.files[0].name;
+      }
+    });
+
+    dropZoneXML.addEventListener('click', () => {
+      xmlFileInput.click();
+    });
+    xmlFileInput.addEventListener('change', () => {
+      if (xmlFileInput.files.length > 0) {
+        dropZoneXML.querySelector('p').textContent = xmlFileInput.files[0].name;
+      }
+    });
+
+    uploadXMLBtn.addEventListener('click', e => {
+      e.preventDefault();
+      if (!xmlFileInput.files.length) {
+        uploadStatusXML.style.color = "red";
+        uploadStatusXML.textContent = "請先拖曳或選擇一個 XML 檔案";
+        return;
+      }
+      uploadStatusXML.style.color = "blue";
+      uploadStatusXML.textContent = "上傳中...";
+      const formData = new FormData();
+      formData.append("file", xmlFileInput.files[0]);
+
+      fetch('/admin/upload_classlist_xml', {
+        method: 'POST',
+        body: formData
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.error) {
+          uploadStatusXML.style.color = "red";
+          uploadStatusXML.textContent = data.error;
+        } else {
+          uploadStatusXML.style.color = "green";
+          uploadStatusXML.textContent = data.message || "上傳成功";
+        }
+      })
+      .catch(err => {
+        uploadStatusXML.style.color = "red";
+        uploadStatusXML.textContent = "上傳失敗: " + err;
+      });
+    });
+  </script>
+</body>
+</html>

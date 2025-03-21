@@ -3,6 +3,7 @@ from flask_cors import CORS
 import io, csv
 from openpyxl import Workbook
 import json
+import math
 from db import (
     get_all_students,
     add_evaluation,
@@ -19,9 +20,9 @@ app.secret_key = "your_secret_key_here"  # 請自行設定安全的 secret key
 CORS(app)
 
 # 分組參數
-IDEAL_GROUP_SIZE = 5   # 理想組別人數
-MIN_GROUP_SIZE = 4     # 最低組別人數（必須至少 4 人）
-MAX_GROUP_SIZE = 5     # 最大組別人數
+IDEAL_GROUP_SIZE = 5
+MIN_GROUP_SIZE = 4
+MAX_GROUP_SIZE = 5
 
 # ---------------- 表單狀態功能 ----------------
 init_settings_table()
@@ -67,23 +68,18 @@ def submit_evaluation():
 
 @app.route('/export_relationship_matrix', methods=['GET'])
 def export_relationship_matrix():
-    """
-    匯出整個班的關係矩陣，若只有單向評分 5 分則另一方預設 3 分 (總和=8)。
-    """
     students = get_all_students()
     students_sorted = sorted(students, key=lambda s: s["id"])
     student_ids = [s["id"] for s in students_sorted]
     student_names = [s["name"] for s in students_sorted]
     n = len(student_ids)
 
-    # 收集單向評分，若無評分預設 3 分
     evaluations_grouped = get_all_evaluations_grouped()
     single_map = {}
     for evaluator_id, eval_list in evaluations_grouped.items():
         for record in eval_list:
             single_map[(evaluator_id, record["evaluated_id"])] = record["rating"]
 
-    # 建立 pair_sum
     pair_sum = {}
     for i in student_ids:
         for j in student_ids:
@@ -117,9 +113,6 @@ def export_relationship_matrix():
 
 # ---------------- 分組演算法 ----------------
 def determine_target_size(N):
-    """
-    根據班級總人數 N 決定基本組別大小 T。
-    """
     if N < 50:
         return 3
     elif N < 80:
@@ -129,15 +122,47 @@ def determine_target_size(N):
     else:
         return 6
 
+def force_no_small_groups(groups, student_map, min_size=4, max_size=5):
+    """
+    將原先的分組結果（groups 為各組的 student id 列表）重新分配，
+    保證每組人數介於 min_size 與 max_size 之間。
+    
+    邏輯：
+      1. 將所有組員平坦化到一個列表 all_members。
+      2. 依照最大組人數計算所需組數 g = ceil(N / max_size)，若 g 組無法滿足每組至少 min_size 人，則增加組數。
+      3. 每組先分配 min_size 人，剩餘 extra 人依序補 1 人，使每組人數介於 min_size 與 min_size+1（即 4 或 5）。
+      4. 最後將 student id 轉換為 {id, name} 格式回傳。
+    """
+    # 平坦化所有組員
+    all_members = []
+    for group in groups:
+        all_members.extend(group)
+    N = len(all_members)
+    
+    # 計算初步需要的組數，並確保每組至少 min_size 人
+    g = math.ceil(N / max_size)
+    if min_size * g > N:
+        g += 1
+    
+    # 每組預設分配 min_size 人，多餘的人依序各組加 1
+    extra = N - min_size * g
+    new_groups = []
+    index = 0
+    for i in range(g):
+        group_size = min_size
+        if extra > 0:
+            group_size += 1
+            extra -= 1
+        new_groups.append(all_members[index:index + group_size])
+        index += group_size
+
+    # 將 student id 轉換成包含 id 與 name 的格式
+    final_result = []
+    for group in new_groups:
+        final_result.append([{"id": sid, "name": student_map[sid]} for sid in group])
+    return final_result
+
 def compute_grouping(anchor_id=None):
-    """
-    根據全班學生數與評分結果進行分組：
-      1. 取得所有學生並依學號排序，根據班級總人數 N 決定基本組別大小 T。
-      2. 將前 k = floor(N/T)*T 人依序均分成 k 組，每組 T 人。
-      3. 將剩餘 R = N mod T 人，依據與各組平均互評分（synergy）分配到該組（最多 T+1 人）。
-      4. 最終調整：若有組別人數不足 MIN_GROUP_SIZE，則嘗試將這些學生搬移到其他組或合併。
-      5. 回傳分組結果，每組以 {id, name} 表示。
-    """
     students = get_all_students()
     if not students:
         return []
@@ -147,7 +172,6 @@ def compute_grouping(anchor_id=None):
     student_ids = [s["id"] for s in students_sorted]
     student_map = {s["id"]: s["name"] for s in students_sorted}
 
-    # 建立互惠矩陣 M，若無評分則預設 3 分
     evaluations_grouped = get_all_evaluations_grouped()
     single_map = {}
     for evaluator_id, eval_list in evaluations_grouped.items():
@@ -165,7 +189,6 @@ def compute_grouping(anchor_id=None):
                 r2 = single_map.get((j, i), 3)
                 M[i][j] = r1 + r2
 
-    # 初始均分：將前 k*T 人依序分成 k 組，每組 T 人
     k = N // T
     r = N % T
     groups = []
@@ -173,7 +196,6 @@ def compute_grouping(anchor_id=None):
         group = student_ids[i*T:(i+1)*T]
         groups.append(group)
 
-    # 分配剩餘 R 人，依據與各組的平均互評分分配（只分配到未滿 T+1 的組）
     leftover = student_ids[k*T:]
     for sid in leftover:
         best_gid = None
@@ -189,7 +211,6 @@ def compute_grouping(anchor_id=None):
         else:
             groups.append([sid])
 
-    # 最終調整：若有組別人數不足 MIN_GROUP_SIZE，則嘗試搬移學生
     max_adjust = 50
     adjust_iter = 0
     changed = True
@@ -214,7 +235,6 @@ def compute_grouping(anchor_id=None):
                         changed = True
         groups = [g for g in groups if g]
 
-    # 若仍有組別不足 MIN_GROUP_SIZE，則合併所有不足組
     small_groups = [g for g in groups if len(g) < MIN_GROUP_SIZE]
     if small_groups:
         merged = []
@@ -224,7 +244,6 @@ def compute_grouping(anchor_id=None):
         normal.append(merged)
         groups = normal
 
-    # 局部調整：嘗試將某些學生移動到其他組以提升整體 synergy
     max_local = 50
     local_iter = 0
     changed = True
@@ -250,10 +269,9 @@ def compute_grouping(anchor_id=None):
                     changed = True
         groups = [g for g in groups if g]
 
-    result = []
-    for group in groups:
-        result.append([{"id": sid, "name": student_map[sid]} for sid in group])
-    return result
+    # 在最終階段強制確保沒有小組，重新分配成每組 4~5 人
+    final_groups = force_no_small_groups(groups, student_map, min_size=4, max_size=5)
+    return final_groups
 
 @app.route('/auto_grouping', methods=['GET'])
 def auto_grouping_route():
@@ -261,7 +279,7 @@ def auto_grouping_route():
     groups = compute_grouping(anchor_id)
     return jsonify({"groups": groups})
 
-# ---------------- 後台管理員登入與匯出分組結果 ----------------
+# ---------------- 後台管理員登入與相關功能 ----------------
 @app.route('/admin_login', methods=['GET', 'POST'])
 def admin_login():
     if request.method == "POST":
@@ -337,7 +355,6 @@ def admin_export_grouping():
     groups = compute_grouping(anchor_id)
     groups = [g for g in groups if len(g) > 0]
     
-    # 找出最大組別人數，建立表頭欄位
     max_members = max(len(group) for group in groups)
     wb = Workbook()
     ws = wb.active
@@ -352,7 +369,6 @@ def admin_export_grouping():
         row = [i]
         for member in group:
             row.append(member["name"])
-        # 若該組人數不足 max_members，補上空白
         row.extend([""] * (max_members - len(group)))
         ws.append(row)
     
@@ -362,6 +378,79 @@ def admin_export_grouping():
     return send_file(excel_stream, as_attachment=True,
                      download_name="grouping_result.xlsx",
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.route('/management')
+def management():
+    return render_template('management.html')
+
+# 上傳 Excel 檔案更新班級名單，同時刪除舊的評分資料
+@app.route('/admin/upload_classlist', methods=['POST'])
+def upload_classlist():
+    if not session.get('admin_logged_in'):
+        return jsonify({"error": "未授權的存取"}), 403
+
+    file = request.files.get('file')
+    if not file:
+        return jsonify({"error": "沒有上傳檔案"}), 400
+
+    try:
+        import pandas as pd
+        df = pd.read_excel(file)
+
+        import sqlite3
+        conn = sqlite3.connect('database.db')
+        c = conn.cursor()
+        # 刪除學生名單與評分結果（清空 evaluations）
+        c.execute("DELETE FROM students")
+        c.execute("DELETE FROM evaluations")
+        for index, row in df.iterrows():
+            class_name = row.get("班級", "").strip()
+            student_id = row.get("學號", "").strip()
+            name = row.get("姓名", "").strip()
+            c.execute("INSERT INTO students (id, name) VALUES (?, ?)", (student_id, name))
+        conn.commit()
+        conn.close()
+
+        return jsonify({"message": "上傳成功，資料庫已更新，評分結果已清除"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# 新增上傳 XML 檔案並更新班級名單，同時刪除舊的評分結果
+@app.route('/admin/upload_classlist_xml', methods=['POST'])
+def upload_classlist_xml():
+    if not session.get('admin_logged_in'):
+        return jsonify({"error": "未授權的存取"}), 403
+
+    file = request.files.get('file')
+    if not file:
+        return jsonify({"error": "沒有上傳檔案"}), 400
+
+    try:
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(file)
+        root = tree.getroot()
+        # 假設根節點為 <total_user> 且底下包含多個 <user>
+        students = []
+        for user in root.findall('user'):
+            student_id = user.findtext('username', default="").strip()
+            name = user.findtext('realname', default="").strip()
+            if student_id and name:
+                students.append((student_id, name))
+
+        import sqlite3
+        conn = sqlite3.connect('database.db')
+        c = conn.cursor()
+        # 刪除學生資料與評分結果
+        c.execute("DELETE FROM students")
+        c.execute("DELETE FROM evaluations")
+        for student in students:
+            c.execute("INSERT INTO students (id, name) VALUES (?, ?)", student)
+        conn.commit()
+        conn.close()
+
+        return jsonify({"message": "XML上傳成功，資料庫已更新，評分結果已清除"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/grouping_result')
 def grouping_result():
